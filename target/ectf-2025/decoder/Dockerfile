@@ -25,13 +25,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     texinfo \
     unzip    
 
-# Install MSDK
-RUN apt-get install -y unzip && \
-    wget https://github.com/analogdevicesinc/msdk/archive/refs/tags/v2024_02.zip && \
-    unzip v2024_02.zip && \
-    rm -f v2024_02.zip
-
-ENV MAXIM_PATH=/root/msdk-2024_02
+ENV MAXIM_PATH=/decoder/lib/msdk-2024_10
 
 WORKDIR /decoder
 
