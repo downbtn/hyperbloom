@@ -1,36 +1,22 @@
-# Dockerfile for the 2025 eCTF
-# Make any changes here to set up your build environment (e.g., installing crypto
-# libraries, dependencies, the compiler for a different language)
+FROM alpine:3.22.0
 
-FROM ubuntu:24.04
+LABEL version="0.1"
+LABEL description="Container to build the target decoder image for Hyperbloom"
 
-LABEL version="0.2"
-LABEL description="Example Decoder Docker Container for the 2025 eCTF"
-
-ARG DEBIAN_FRONTEND=noninteractive
 WORKDIR /root
 
-# Install Requisite Packages
-# do this first because it takes the longest
-RUN apt-get update && apt-get upgrade -y && apt-get install -y \
-    gdb \
-    gdb-multiarch \
-    gcc-arm-none-eabi \
-    binutils-arm-none-eabi \
-    make \
-    python3.10 \
-    git \
-    wget \
-    libtool \
-    texinfo \
-    unzip    
+RUN apk add \
+    python3=3.12.11-r0 \
+    gcc-arm-none-eabi=15.1.0-r0 \
+    binutils-arm-none-eabi=2.44-r0 \
+    newlib-arm-none-eabi=4.5.0.20241231-r0 \
+    make=4.4.1-r3 \
+    libtool=2.5.4-r1
+
+# TODO: remove newlib after completely removing libc
 
 ENV MAXIM_PATH=/decoder/lib/msdk-2024_10
 
 WORKDIR /decoder
 
-ENTRYPOINT ["bash", "-c", "make release DECODER_ID=${DECODER_ID} && cp build/max78000.elf build/max78000.bin /out"]
-
-# Sample run command:
-# docker run -v ./decoder/:/decoder -v ./global.secrets:/global.secrets:ro -v ./deadbeef_build:/out -e DECODER_ID=0xdeadbeef build-decoder
-
+ENTRYPOINT ["sh", "-c", "make release DECODER_ID=${DECODER_ID} && cp build/max78000.elf build/max78000.bin /out"]
