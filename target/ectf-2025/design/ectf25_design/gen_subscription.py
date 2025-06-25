@@ -43,7 +43,7 @@ def gen_subscription(
 
     # channel key = SHA256(root || channel#)
     hash_input = root_key + struct.pack("<I", channel)
-    assert len(hash_input) == 40
+    assert len(hash_input) == 36
     hasher = SHA256.new()
     hasher.update(hash_input)
     channel_key = hasher.digest()

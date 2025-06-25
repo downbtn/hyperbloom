@@ -1,14 +1,10 @@
 /**
  * @file    decoder.c
- * @author  Samuel Meyers
- * @brief   eCTF Decoder Example Design Implementation
+ * @author  Samuel Meyers, Daniel Ha
+ * @brief   eCTF Hardware-Insecure Example implementation
  * @date    2025
  *
- * This source file is part of an example system for MITRE's 2025 Embedded System CTF (eCTF).
- * This code is being provided only for educational purposes for the 2025 MITRE eCTF competition,
- * and may not meet MITRE standards for quality. Use this code at your own risk!
- *
- * @copyright Copyright (c) 2025 The MITRE Corporation
+ * @copyright Copyright (c) 2025 The MITRE Corporation, with changes (c) 2025 Daniel Ha
  */
 
 /*********************** INCLUDES *************************/
@@ -42,6 +38,7 @@
 #define EMERGENCY_CHANNEL 0
 #define FRAME_SIZE 64
 #define DEFAULT_CHANNEL_TIMESTAMP 0xFFFFFFFFFFFFFFFF
+#define VALID_MAGIC 0x39393939
 // This is a canary value so we can confirm whether this decoder has booted before
 #define FLASH_FIRST_BOOT 0xDEADBEEF
 
@@ -67,11 +64,18 @@ typedef struct {
 } frame_packet_t;
 
 typedef struct {
-    decoder_id_t decoder_id;
-    timestamp_t start_timestamp;
-    timestamp_t end_timestamp;
-    channel_id_t channel;
+    uint8_t iv[12];
+    uint8_t encrypted_sub[56];
+    uint8_t mac[32];
 } subscription_update_packet_t;
+
+typedef struct {
+    uint32_t device_id;
+    uint64_t start;
+    uint64_t end;
+    uint32_t channel;
+    uint8_t channel_key[32];
+} decrypted_subscription_t;
 
 typedef struct {
     channel_id_t channel;
@@ -91,11 +95,12 @@ typedef struct {
  **********************************************************/
 
 typedef struct {
-    bool active;
+    uint32_t magic;
     channel_id_t id;
     timestamp_t start_timestamp;
     timestamp_t end_timestamp;
 } channel_status_t;
+
 
 typedef struct {
     uint32_t first_boot; // if set to FLASH_FIRST_BOOT, device has booted before.
