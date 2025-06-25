@@ -11,10 +11,15 @@ Copyright: Copyright (c) 2025 The MITRE Corporation
 """
 
 import argparse
+from base64 import b64decode
+import hashlib
 import json
 from pathlib import Path
+import random
 import struct
 
+from Crypto.Cipher import AES
+from Crypto.Hash import HMAC, SHA256
 from loguru import logger
 
 
@@ -31,19 +36,37 @@ def gen_subscription(
     :param end: Last timestamp the subscription is valid for
     :param channel: Channel to enable
     """
-    # TODO: Update this function to provide a Decoder with whatever data it needs to
-    #   subscribe to a new channel
-
     # Load the json of the secrets file
     secrets = json.loads(secrets)
+    root_key = b64decode(secrets["channel_root_key"])
+    subscription_key = b64decode(secrets["subscription_key"])
 
-    # You can use secrets generated using `gen_secrets` here like:
-    # secrets["some_secrets"]
-    # Which would return "EXAMPLE" in the reference design.
-    # Please note that the secrets are READ ONLY at this sage!
+    # channel key = SHA256(root || channel#)
+    hash_input = root_key + struct.pack("<I", channel)
+    assert len(hash_input) == 40
+    hasher = SHA256.new()
+    hasher.update(hash_input)
+    channel_key = hasher.digest()
+    assert len(channel_key) == 32
 
-    # Pack the subscription. This will be sent to the decoder with ectf25.tv.subscribe
-    return struct.pack("<IQQI", device_id, start, end, channel)
+    # encrypt final subscription
+    plaintext_sub = struct.pack("<IQQI", device_id, start, end, channel) + channel_key
+    assert len(plaintext_sub) == 56
+    iv = random.randbytes(12)
+    aes = AES.new(key=subscription_key, mode=AES.MODE_CTR, nonce=iv)
+    ciphertext = aes.encrypt(plaintext_sub)
+    assert len(ciphertext) == 56
+
+    # hmac the subscription to prevent forgery
+    unsigned_sub = iv + ciphertext
+    hmac = HMAC.new(subscription_key, digestmod=SHA256)
+    hmac.update(unsigned_sub)
+    tag = hmac.digest()
+    assert len(tag) == 32
+
+    # total length: 100
+    return iv + ciphertext + tag
+     
 
 
 def parse_args():
