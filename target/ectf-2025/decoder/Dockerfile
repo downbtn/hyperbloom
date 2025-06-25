@@ -19,4 +19,4 @@ ENV MAXIM_PATH=/decoder/lib/msdk-2024_10
 
 WORKDIR /decoder
 
-ENTRYPOINT ["sh", "-c", "make release DECODER_ID=${DECODER_ID} && cp build/max78000.elf build/max78000.bin /out"]
+ENTRYPOINT ["sh", "-c", "python3 gen_secrets_h.py && make release DECODER_ID=${DECODER_ID} && cp build/max78000.elf build/max78000.bin /out"]

@@ -23,6 +23,7 @@
 #include "host_messaging.h"
 
 #include "simple_uart.h"
+#include "secrets.h"
 
 /* Code between this #ifdef and the subsequent #endif will
 *  be ignored by the compiler if CRYPTO_EXAMPLE is not set in

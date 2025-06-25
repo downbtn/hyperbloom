@@ -11,10 +11,14 @@ Copyright: Copyright (c) 2025 The MITRE Corporation
 """
 
 import argparse
+from base64 import b64encode
 import json
 from pathlib import Path
+from secrets import token_bytes
+import struct
 
 from loguru import logger
+from Crypto.Hash import SHA256
 
 
 def gen_secrets(channels: list[int]) -> bytes:
@@ -29,20 +33,29 @@ def gen_secrets(channels: list[int]) -> bytes:
 
     :returns: Contents of the secrets file
     """
-    # TODO: Update this function to generate any system-wide secrets needed by
-    #   your design
 
-    # Create the secrets object
-    # You can change this to generate any secret material
-    # The secrets file will never be shared with attackers
+    # key used to encrypt and verify subscription data
+    subscription_key = token_bytes(32)
+
+    # root key used to derive channel keys during subscription generation
+    channel_root_key = token_bytes(32)
+
+    # pre-compute emergency key
+    hasher = SHA256.new()
+    hasher.update(channel_root_key + struct.pack("<I", 0))
+    emergency_key = hasher.digest()
+
+    assert len(emergency_key) == 32
+    assert len(subscription_key) == 32
+    assert len(channel_root_key) == 32
+
     secrets = {
         "channels": channels,
-        "some_secrets": "EXAMPLE",
+        "subscription_key": b64encode(subscription_key).decode(),
+        "channel_root_key": b64encode(channel_root_key).decode(),
+        "emergency_key": b64encode(emergency_key).decode(),
     }
 
-    # NOTE: if you choose to use JSON for your file type, you will not be able to
-    # store binary data, and must either use a different file type or encode the
-    # binary data to hex, base64, or another type of ASCII-only encoding
     return json.dumps(secrets).encode()
 
 
