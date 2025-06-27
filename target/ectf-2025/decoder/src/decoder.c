@@ -15,9 +15,10 @@
 #include "status_led.h"
 #include "board.h"
 #include "mxc_delay.h"
-#include "simple_flash.h"
-#include "host_messaging.h"
 
+#include "crypto.h"
+#include "host_messaging.h"
+#include "simple_flash.h"
 #include "simple_uart.h"
 #include "secrets.h"
 
@@ -99,6 +100,7 @@ typedef struct {
     channel_id_t id;
     timestamp_t start_timestamp;
     timestamp_t end_timestamp;
+    uint8_t key[32];
 } channel_status_t;
 
 
@@ -130,7 +132,7 @@ int is_subscribed(channel_id_t channel) {
     }
     // Check if the decoder has has a subscription
     for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
-        if (decoder_status.subscribed_channels[i].id == channel && decoder_status.subscribed_channels[i].active) {
+        if (decoder_status.subscribed_channels[i].magic == VALID_MAGIC && decoder_status.subscribed_channels[i].id == channel) {
             return 1;
         }
     }
@@ -181,20 +183,44 @@ int list_channels() {
 */
 int update_subscription(pkt_len_t pkt_len, subscription_update_packet_t *update) {
     int i;
+    
+    // Verify MAC of IV & ciphertext
+    uint8_t hmac[32];
+    compute_hmac((const uint8_t *)update->iv, 68, SUBSCRIPTION_KEY, hmac);
 
-    if (update->channel == EMERGENCY_CHANNEL) {
-        STATUS_LED_RED();
-        print_error("Failed to update subscription - cannot subscribe to emergency channel\n");
-        return -1;
+    // vulnerable to timing attack!
+    if (memcmp(hmac, update->mac, 32) != 0) {
+        STATUS_LED_ERROR();
+        print_error("Subscription HMAC does not match!\n");
+        return 1;
+    }
+
+    // Decrypt subscription body
+    uint8_t decrypted_data[56];
+    decrypt_sym(update->ciphertext, 56, update->iv, SUBSCRIPTION_KEY, decrypted_data);
+
+    decrypted_subscription_t *decrypted_sub = (decrypted_subscription_t *)decrypted_data;
+
+    if (decrypted_sub->device_id != DECODER_ID) {
+        STATUS_LED_ERROR();
+        print_error("Decoder ID mismatch!\n");
+        return 1;
+    }
+
+    if (decrypted_sub->start > decrypted_sub->end) {
+        STATUS_LED_ERROR();
+        print_error("Invalid start/end range!\n");
+        return 1;
     }
 
     // Find the first empty slot in the subscription array
     for (i = 0; i < MAX_CHANNEL_COUNT; i++) {
-        if (decoder_status.subscribed_channels[i].id == update->channel || !decoder_status.subscribed_channels[i].active) {
-            decoder_status.subscribed_channels[i].active = true;
-            decoder_status.subscribed_channels[i].id = update->channel;
-            decoder_status.subscribed_channels[i].start_timestamp = update->start_timestamp;
-            decoder_status.subscribed_channels[i].end_timestamp = update->end_timestamp;
+        if (decoder_status.subscribed_channels[i].id == update->channel || decoder_status.subscribed_channels[i].magic != VALID_MAGIC) {
+            decoder_status.subscribed_channels[i].magic = VALID_MAGIC;
+            decoder_status.subscribed_channels[i].id = decrypted_sub->channel;
+            decoder_status.subscribed_channels[i].start_timestamp = decrypted_sub->start;
+            decoder_status.subscribed_channels[i].end_timestamp = decrypted_sub->end;
+            memcpy(&decoder_status.subscribed_channels[i].key, decrypted_sub->key, 32);
             break;
         }
     }
@@ -272,9 +298,9 @@ void init() {
         channel_status_t subscription[MAX_CHANNEL_COUNT];
 
         for (int i = 0; i < MAX_CHANNEL_COUNT; i++){
+            subscription[i].magic = 0;
             subscription[i].start_timestamp = DEFAULT_CHANNEL_TIMESTAMP;
             subscription[i].end_timestamp = DEFAULT_CHANNEL_TIMESTAMP;
-            subscription[i].active = false;
         }
 
         // Write the starting channel subscriptions into flash.

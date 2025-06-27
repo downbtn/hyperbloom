@@ -71,7 +71,7 @@ int write_packet(msg_type_t type, const void *buf, uint16_t len);
  * 
  *  @return 0 on success, a negative number on failure
 */
-int read_packet(msg_type_t* cmd, void *buf, uint16_t *len);
+int read_packet(msg_type_t* cmd, void *buf, uint16_t *len, uint16_t buf_size);
 
 // Macro definitions to print the specified format for error messages
 #define print_error(msg) write_packet(ERROR_MSG, msg, strlen(msg))

@@ -250,6 +250,7 @@ PROJ_CFLAGS += -DSINGLE_THREADED
 # From https://www.wolfssl.com/documentation/manuals/wolfssl/chapter02.html#building-with-gcc-arm
 PROJ_CFLAGS += -DHAVE_PK_CALLBACKS                                                               
 PROJ_CFLAGS += -DWOLFSSL_USER_IO                                                                 
+PROJ_CFLAGS += -DWOLFSSL_AES_COUNTER
 PROJ_CFLAGS += -DNO_WRITEV -DTIME_T_NOT_64BIT                                                    
 
 ifeq ($(POST_BOOT_ENABLED), 1)
