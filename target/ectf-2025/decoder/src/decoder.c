@@ -38,6 +38,7 @@
 #define MAX_CHANNEL_COUNT 8
 #define EMERGENCY_CHANNEL 0
 #define FRAME_SIZE 64
+#define MAX_PACKET_SIZE 132 // frame decode
 #define DEFAULT_CHANNEL_TIMESTAMP 0xFFFFFFFFFFFFFFFF
 #define VALID_MAGIC 0x39393939
 // This is a canary value so we can confirm whether this decoder has booted before
@@ -58,25 +59,38 @@
 #pragma pack(push, 1) // Tells the compiler not to pad the struct members
 // for more information on what struct padding does, see:
 // https://www.gnu.org/software/c-intro-and-ref/manual/html_node/Structure-Layout.html
+//
 typedef struct {
-    channel_id_t channel;
     timestamp_t timestamp;
+    channel_id_t channel;
+    uint32_t frame_len;
     uint8_t data[FRAME_SIZE];
-} frame_packet_t;
+} decrypted_frame_t;
+_Static_assert(sizeof(decrypted_frame_t) == 80, "sizeof(decrypted_frame_t)");
 
 typedef struct {
-    uint8_t iv[12];
-    uint8_t encrypted_sub[56];
+    channel_id_t channel;
+    uint8_t iv[16];
+    uint8_t encrypted_frame[sizeof(decrypted_frame_t)];
     uint8_t mac[32];
-} subscription_update_packet_t;
+} frame_packet_t;
+_Static_assert(sizeof(frame_packet_t) == 132, "sizeof(frame_packet_t)");
 
 typedef struct {
     uint32_t device_id;
     uint64_t start;
     uint64_t end;
     uint32_t channel;
-    uint8_t channel_key[32];
+    uint8_t key[32];
 } decrypted_subscription_t;
+_Static_assert(sizeof(decrypted_subscription_t) == 56, "sizeof(decrypted_subscription_t)");
+
+typedef struct {
+    uint8_t iv[16];
+    uint8_t encrypted_sub[sizeof(decrypted_subscription_t)];
+    uint8_t mac[32];
+} subscription_update_packet_t;
+_Static_assert(sizeof(subscription_update_packet_t) == 104, "sizeof(subscription_update_packet_t)");
 
 typedef struct {
     channel_id_t channel;
@@ -117,29 +131,6 @@ typedef struct {
 flash_entry_t decoder_status;
 
 /**********************************************************
- ******************* UTILITY FUNCTIONS ********************
- **********************************************************/
-
-/** @brief Checks whether the decoder is subscribed to a given channel
- *
- *  @param channel The channel number to be checked.
- *  @return 1 if the the decoder is subscribed to the channel.  0 if not.
-*/
-int is_subscribed(channel_id_t channel) {
-    // Check if this is an emergency broadcast message
-    if (channel == EMERGENCY_CHANNEL) {
-        return 1;
-    }
-    // Check if the decoder has has a subscription
-    for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
-        if (decoder_status.subscribed_channels[i].magic == VALID_MAGIC && decoder_status.subscribed_channels[i].id == channel) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-/**********************************************************
  ********************* CORE FUNCTIONS *********************
  **********************************************************/
 
@@ -154,7 +145,7 @@ int list_channels() {
     resp.n_channels = 0;
 
     for (uint32_t i = 0; i < MAX_CHANNEL_COUNT; i++) {
-        if (decoder_status.subscribed_channels[i].active) {
+        if (decoder_status.subscribed_channels[i].magic == VALID_MAGIC) {
             resp.channel_info[resp.n_channels].channel =  decoder_status.subscribed_channels[i].id;
             resp.channel_info[resp.n_channels].start = decoder_status.subscribed_channels[i].start_timestamp;
             resp.channel_info[resp.n_channels].end = decoder_status.subscribed_channels[i].end_timestamp;
@@ -185,42 +176,44 @@ int update_subscription(pkt_len_t pkt_len, subscription_update_packet_t *update)
     int i;
     
     // Verify MAC of IV & ciphertext
-    uint8_t hmac[32];
-    compute_hmac((const uint8_t *)update->iv, 68, SUBSCRIPTION_KEY, hmac);
+    uint8_t hmac[sizeof(update->mac)];
+    const uint32_t size_to_mac = sizeof(update->iv) + sizeof(update->encrypted_sub);
+    _Static_assert(size_to_mac == 72);
+    compute_hmac((const uint8_t *)update, sizeof(update->iv) + sizeof(update->encrypted_sub), SUBSCRIPTION_KEY, hmac);
 
     // vulnerable to timing attack!
-    if (memcmp(hmac, update->mac, 32) != 0) {
+    if (memcmp(hmac, update->mac, sizeof(hmac)) != 0) {
         STATUS_LED_ERROR();
-        print_error("Subscription HMAC does not match!\n");
-        return 1;
+        print_error("Subscription HMAC does not match\n");
+        return -1;
     }
 
     // Decrypt subscription body
-    uint8_t decrypted_data[56];
-    decrypt_sym(update->ciphertext, 56, update->iv, SUBSCRIPTION_KEY, decrypted_data);
+    uint8_t decrypted_data[sizeof(update->encrypted_sub)];
+    decrypt_sym(update->encrypted_sub, sizeof(decrypted_data), update->iv, SUBSCRIPTION_KEY, decrypted_data);
 
     decrypted_subscription_t *decrypted_sub = (decrypted_subscription_t *)decrypted_data;
 
     if (decrypted_sub->device_id != DECODER_ID) {
         STATUS_LED_ERROR();
-        print_error("Decoder ID mismatch!\n");
-        return 1;
+        print_error("Decoder ID mismatch\n");
+        return -1;
     }
 
     if (decrypted_sub->start > decrypted_sub->end) {
         STATUS_LED_ERROR();
-        print_error("Invalid start/end range!\n");
-        return 1;
+        print_error("Invalid start/end range\n");
+        return -1;
     }
 
     // Find the first empty slot in the subscription array
     for (i = 0; i < MAX_CHANNEL_COUNT; i++) {
-        if (decoder_status.subscribed_channels[i].id == update->channel || decoder_status.subscribed_channels[i].magic != VALID_MAGIC) {
+        if (decoder_status.subscribed_channels[i].id == decrypted_sub->channel || decoder_status.subscribed_channels[i].magic != VALID_MAGIC) {
             decoder_status.subscribed_channels[i].magic = VALID_MAGIC;
             decoder_status.subscribed_channels[i].id = decrypted_sub->channel;
             decoder_status.subscribed_channels[i].start_timestamp = decrypted_sub->start;
             decoder_status.subscribed_channels[i].end_timestamp = decrypted_sub->end;
-            memcpy(&decoder_status.subscribed_channels[i].key, decrypted_sub->key, 32);
+            memcpy(&decoder_status.subscribed_channels[i].key, decrypted_sub->key, sizeof(decrypted_sub->key));
             break;
         }
     }
@@ -247,33 +240,76 @@ int update_subscription(pkt_len_t pkt_len, subscription_update_packet_t *update)
  *  @return 0 if successful.  -1 if data is from unsubscribed channel.
 */
 int decode(pkt_len_t pkt_len, frame_packet_t *new_frame) {
-    char output_buf[128] = {0};
-    uint16_t frame_size;
-    channel_id_t channel;
+    // Get channel key
+    const uint8_t *key;
+    timestamp_t start;
+    timestamp_t end;
 
-    // Frame size is the size of the packet minus the size of non-frame elements
-    frame_size = pkt_len - (sizeof(new_frame->channel) + sizeof(new_frame->timestamp));
-    channel = new_frame->channel;
-
-    // The reference design doesn't use the timestamp, but you may want to in your design
-    // timestamp_t timestamp = new_frame->timestamp;
-
-    // Check that we are subscribed to the channel...
-    print_debug("Checking subscription\n");
-    if (is_subscribed(channel)) {
-        print_debug("Subscription Valid\n");
-        /* The reference design doesn't need any extra work to decode, but your design likely will.
-        *  Do any extra decoding here before returning the result to the host. */
-        write_packet(DECODE_MSG, new_frame->data, frame_size);
-        return 0;
+    if (new_frame->channel == EMERGENCY_CHANNEL) {
+        key = EMERGENCY_KEY;
+        start = 0;
+        end = UINT64_MAX;
     } else {
+        uint16_t i;
+        for (i = 0; i < MAX_CHANNEL_COUNT; i++) {
+            if (decoder_status.subscribed_channels[i].magic == VALID_MAGIC && decoder_status.subscribed_channels[i].id == new_frame->channel) {
+                key = decoder_status.subscribed_channels[i].key;
+                start = decoder_status.subscribed_channels[i].start_timestamp;
+                end = decoder_status.subscribed_channels[i].end_timestamp;
+                break;
+            }
+        }
+
+        if (i == MAX_CHANNEL_COUNT) {
+            // no subscription for that channel
+            STATUS_LED_RED();
+            print_error("No subscription on that channel\n");
+            return -1;
+        }
+    }
+
+    // Verify HMAC    
+    uint8_t hmac[sizeof(new_frame->mac)];
+    const uint32_t size_to_mac = sizeof(new_frame->iv) + sizeof(new_frame->channel) + sizeof(new_frame->encrypted_frame);
+    _Static_assert(size_to_mac == 100);
+    compute_hmac((const uint8_t *)new_frame, size_to_mac, key, hmac);
+    
+    if (memcmp(hmac, new_frame->mac, sizeof(hmac)) != 0) {
         STATUS_LED_RED();
-        sprintf(
-            output_buf,
-            "Receiving unsubscribed channel data.  %u\n", channel);
-        print_error(output_buf);
+        print_error("Frame HMAC does not match!\n");
         return -1;
     }
+
+    // Attempt decryption of frame data
+    decrypted_frame_t dec;
+    decrypt_sym((const uint8_t *) new_frame->encrypted_frame, sizeof(new_frame->encrypted_frame), (const uint8_t *)new_frame->iv, key, (uint8_t *) &dec);
+
+    if (dec.frame_len > FRAME_SIZE) {
+        STATUS_LED_RED();
+        print_error("Frame data length too large (corrupted frame?)\n");
+        return -1;
+    }
+
+    if (new_frame->channel != dec.channel) {
+        STATUS_LED_RED();
+        print_error("Channel ID mismatch (corrupted frame?)\n");
+        return -1;
+    }
+
+    if (dec.timestamp < start) {
+        STATUS_LED_RED();
+        print_error("Frame timestamp too early\n");
+        return -1;
+    }
+
+    if (dec.timestamp > end) {
+        STATUS_LED_RED();
+        print_error("Frame timestamp too late\n");
+        return -1;
+    }
+
+    write_packet(DECODE_MSG, dec.data, dec.frame_len);
+    return 0;
 }
 
 /** @brief Initializes peripherals for system boot.
@@ -325,7 +361,7 @@ void init() {
 
 int main(void) {
     char output_buf[128] = {0};
-    uint8_t uart_buf[100];
+    uint8_t uart_buf[MAX_PACKET_SIZE];
     msg_type_t cmd;
     int result;
     uint16_t pkt_len;
@@ -341,7 +377,7 @@ int main(void) {
 
         STATUS_LED_GREEN();
 
-        result = read_packet(&cmd, uart_buf, &pkt_len);
+        result = read_packet(&cmd, uart_buf, &pkt_len, MAX_PACKET_SIZE);
 
         if (result < 0) {
             STATUS_LED_ERROR();

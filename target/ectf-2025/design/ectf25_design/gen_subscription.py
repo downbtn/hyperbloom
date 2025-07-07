@@ -12,6 +12,7 @@ Copyright: Copyright (c) 2025 The MITRE Corporation
 
 import argparse
 from base64 import b64decode
+from binascii import hexlify
 import hashlib
 import json
 from pathlib import Path
@@ -52,21 +53,28 @@ def gen_subscription(
     # encrypt final subscription
     plaintext_sub = struct.pack("<IQQI", device_id, start, end, channel) + channel_key
     assert len(plaintext_sub) == 56
-    iv = random.randbytes(12)
-    aes = AES.new(key=subscription_key, mode=AES.MODE_CTR, nonce=iv)
+
+    # PyCryptodome appends its own 4-byte counter starting from zero, while
+    # wolfSSL expects the full 16b IV
+    nonce = random.randbytes(12)
+    padded_nonce = nonce + struct.pack("<I", 0)
+
+    aes = AES.new(key=subscription_key, mode=AES.MODE_CTR, nonce=nonce)
     ciphertext = aes.encrypt(plaintext_sub)
     assert len(ciphertext) == 56
 
     # hmac the subscription to prevent forgery
-    unsigned_sub = iv + ciphertext
+    unsigned_sub = padded_nonce + ciphertext
+    assert len(unsigned_sub) == 72
     hmac = HMAC.new(subscription_key, digestmod=SHA256)
     hmac.update(unsigned_sub)
     tag = hmac.digest()
     assert len(tag) == 32
 
-    # total length: 100
-    return iv + ciphertext + tag
-     
+    final_sub = padded_nonce + ciphertext + tag
+    assert(len(final_sub) == 104)
+    return final_sub
+
 
 
 def parse_args():

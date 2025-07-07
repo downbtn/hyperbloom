@@ -13,8 +13,10 @@ with open("/global.secrets", "r") as f:
 subscription_key = bytes_to_char(b64decode(secrets["subscription_key"]))
 emergency_key = bytes_to_char(b64decode(secrets["emergency_key"]))
 
-header = f"""static const char SUBSCRIPTION_KEY[] = {subscription_key};
-static const char EMERGENCY_KEY[] = {emergency_key};
+header = f"""#include <stdint.h>
+
+static const uint8_t SUBSCRIPTION_KEY[] = {subscription_key};
+static const uint8_t EMERGENCY_KEY[] = {emergency_key};
 """
 
 with open("/decoder/inc/secrets.h", "w") as f:
