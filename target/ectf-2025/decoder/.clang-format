@@ -1,0 +1,17 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# Use 4 spaces for indentation (no tabs)
+IndentWidth: 4
+UseTab: Never
+# Align pointers to the variable name side (right)
+PointerAlignment: Right
+# Maximum column width of 80 characters
+ColumnLimit: 80
+# Brace wrapping style - K&R
+BreakBeforeBraces: Linux
+# Sort includes to maintain consistency
+SortIncludes: true
+# Indent case labels for better readability in state machines
+IndentCaseLabels: true

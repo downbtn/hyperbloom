@@ -175,7 +175,7 @@ VPATH := $(VPATH)
 
 # Where to find header files for this project
 IPATH += .
-IPATH += include
+IPATH += inc
 IPATH += lib/wolfssl-5.8.0
 IPATH := $(IPATH)
 
@@ -423,3 +423,7 @@ clean:
 
 # The rule to clean out all the build products.
 distclean: clean libclean
+
+format:
+	find inc -name "*.h" | xargs clang-format -i --verbose
+	find src -name "*.c" | xargs clang-format -i --verbose
