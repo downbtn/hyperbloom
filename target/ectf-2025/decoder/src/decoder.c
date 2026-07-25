@@ -135,6 +135,9 @@ typedef struct {
 // This is used to track decoder subscriptions
 flash_entry_t decoder_status;
 
+static timestamp_t most_recent_timestamp = 0;
+static bool first_frame = true;
+
 /**********************************************************
  ********************* CORE FUNCTIONS *********************
  **********************************************************/
@@ -333,6 +336,15 @@ int decode(pkt_len_t pkt_len, frame_packet_t *new_frame)
     if (dec.timestamp > end) {
         STATUS_LED_RED();
         print_error("Frame timestamp too late\n");
+        return -1;
+    }
+
+    if (first_frame || dec.timestamp > most_recent_timestamp) {
+        first_frame = false;
+        most_recent_timestamp = dec.timestamp;
+    } else {
+        STATUS_LED_RED();
+        print_error("Received a frame out of order\n");
         return -1;
     }
 
